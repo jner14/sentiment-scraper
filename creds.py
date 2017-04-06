@@ -1,0 +1,5 @@
+GLASSDOOR_USR = "place user name here"
+GLASSDOOR_PSD = "place password here"
+DB_URL = "place database url here"
+DB_USR = "place database master username here"
+DB_PWD = "place database passwrod here"
