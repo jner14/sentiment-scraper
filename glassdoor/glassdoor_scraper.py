@@ -11,19 +11,22 @@ Usage:
 import sys
 import os
 import random
+import hashlib
 import time
 import datetime
 import pytz
 from selenium import webdriver
-from general_utilities.navigation_utilities import issue_driver_query
 from general_utilities.parsing_utilities import parse_num
-from general_utilities.mongo_utilities import store_in_mongo
+from general_utilities.mysql_connection import MySqlConnector
+import pandas as pd
+import creds
 
 
-wd = os.path.abspath('.')
-sys.path.append(wd + '/../')
+# wd = os.path.abspath('.')
+# sys.path.append(wd + '/../')
 Keys = webdriver.common.keys.Keys
-
+By = webdriver.common.by.By
+ActionChains = webdriver.common.action_chains.ActionChains
 
 def scrape_job_page(driver, job_title, job_location):
     """Scrape a page of reviews from Glassdoor.
@@ -33,7 +36,7 @@ def scrape_job_page(driver, job_title, job_location):
         job_title: str
         job_location: str
     """
-    
+
     current_date = str(datetime.datetime.now(pytz.timezone('US/Mountain')))
     json_dct = {'search_title': job_title,
                 'search_location': job_location,
@@ -41,12 +44,13 @@ def scrape_job_page(driver, job_title, job_location):
 
     jobs = driver.find_elements_by_class_name('jobListing')
 
-    mongo_update_lst = [query_for_data(driver, json_dct, job, idx) for 
+    mongo_update_lst = [query_for_data(driver, json_dct, job, idx) for
             idx, job in enumerate(jobs[:-1])]
 
     store_in_mongo(mongo_update_lst, 'job_postings', 'glassdoor')
 
-def query_for_data(driver, json_dct, job, idx): 
+
+def query_for_data(driver, json_dct, job, idx):
     """Grab all info. from the job posting
     
     This will include the job title, the job location, the 
@@ -71,9 +75,9 @@ def query_for_data(driver, json_dct, job, idx):
             'companyInfo').text.split()
     posting_location = job.find_element_by_xpath(
             "//div//span[@itemprop='jobLocation']").text
-    try: 
+    try:
         posting_date = job.find_element_by_class_name('minor').text
-    except: 
+    except:
         posting_date = ''
 
     # I couldn't think of any clearly better way to do this. If they have 
@@ -85,17 +89,18 @@ def query_for_data(driver, json_dct, job, idx):
     if parse_num(' '.join(split_posting_company), 0):
         num_stars = split_posting_company[0]
         posting_company = ' '.join(split_posting_company[1:])
-        out_json_dct = gen_output(json_dct.copy(), posting_title, 
+        out_json_dct = gen_output(json_dct.copy(), posting_title,
                 posting_location, posting_date, posting_company, num_stars)
-    else: 
+    else:
         posting_company = ' '.join(split_posting_company)
-        out_json_dct = gen_output(json_dct.copy(), posting_title, 
+        out_json_dct = gen_output(json_dct.copy(), posting_title,
                 posting_location, posting_date, posting_company)
-    
+
     out_json_dct['posting_txt'] = grab_posting_txt(driver, job, idx)
     return out_json_dct
-    
-def gen_output(json_dct, *args): 
+
+
+def gen_output(json_dct, *args):
     """Prep json_dct to be stored in Mongo. 
 
     Add in all of the *args into the json_dct so that we can store it 
@@ -114,13 +119,14 @@ def gen_output(json_dct, *args):
     Return: dct
     """
     keys_to_add = ('job_title', 'location', 'date', 'company', 'num_stars')
-    for arg, key in zip(args, keys_to_add): 
-        if arg: 
+    for arg, key in zip(args, keys_to_add):
+        if arg:
             json_dct[key] = arg
 
     return json_dct
 
-def grab_posting_txt(driver, job, idx): 
+
+def grab_posting_txt(driver, job, idx):
     """Grab the job posting's actual text. 
 
     Args: 
@@ -136,9 +142,9 @@ def grab_posting_txt(driver, job, idx):
     job_link.send_keys(Keys.ENTER)
     job_link.send_keys(Keys.ESCAPE)
 
-    try: 
+    try:
         print(job.find_element_by_class_name('reviews-tab-link').text)
-    except: 
+    except:
         pass
 
     time.sleep(random.randint(3, 7))
@@ -146,7 +152,8 @@ def grab_posting_txt(driver, job, idx):
 
     return texts[idx].text
 
-def check_if_next(driver, num_pages): 
+
+def check_if_next(driver, num_pages):
     """Check if there is a next page of job results to grab. 
 
     Args: 
@@ -156,13 +163,13 @@ def check_if_next(driver, num_pages):
 
     Return: bool
     """
-    
-    try: 
+
+    try:
         next_link = driver.find_element_by_xpath("//li[@class='next']")
         page_links = driver.find_elements_by_xpath(
                 "//li//span[@class='disabled']")
         last_page = check_if_last_page(page_links, num_pages)
-        if last_page:  
+        if last_page:
             return False
         time.sleep(random.randint(3, 6))
         next_link.click()
@@ -171,7 +178,8 @@ def check_if_next(driver, num_pages):
         print(e)
         return False
 
-def check_if_last_page(page_links, num_pages): 
+
+def check_if_last_page(page_links, num_pages):
     """Parse page links list. 
 
     Figure out if current page is the last page. 
@@ -184,52 +192,116 @@ def check_if_last_page(page_links, num_pages):
     Return: bool or int
     """
 
-    if len(page_links) == 1: 
+    if len(page_links) == 1:
         return False
-    else: 
+    else:
         elem1_text = page_links[0].text
         elem2_text = page_links[1].text
-        if elem1_text: 
+        if elem1_text:
             return int(elem1_text) == num_pages
-        elif elem2_text: 
+        elif elem2_text:
             return int(elem2_text) == num_pages
 
 if __name__ == '__main__':
+
     try:
         companies = [x for x in sys.argv][1:]
-    except IndexError: 
+    except IndexError:
         raise Exception('Program needs one or more company names!')
-    
-    # Issue the job query. 
-    base_URL = 'https://www.glassdoor.com/index.htm'
-    query_params = (('KeywordSearch', jobTitle), ('LocationSearch', jobLocation))
-    driver = issue_driver_query(base_URL, query_params)
 
-    # Find the text holding the number of jobs, and parse it. 
-    time.sleep(random.randint(7, 15))
-    num_jobs_txt = driver.find_elements_by_xpath('//header')[1].text
-    num_jobs = int(parse_num(num_jobs_txt, 0)) 
+    # Create a database connection object
+    db = MySqlConnector(creds.DB_URL, creds.DB_USR, creds.DB_PWD)
 
-    current_date = str(datetime.datetime.now(pytz.timezone('US/Mountain')))
-    storage_dct = {'job_site': 'glassdoor', 'num_jobs': num_jobs, 
-            'date': current_date, 'title': jobTitle, 'location': jobLocation}
-    store_in_mongo([storage_dct], 'job_numbers', 'glassdoor')
+    # Create Selenium webdriver using Chrome and chromedriver
+    driver = webdriver.Chrome()
 
-    # Find the text holding the number of pages in the job search. 
-    time.sleep(random.randint(2, 6))
-    try: 
-        num_pages_txt = driver.find_element_by_id('ResultsFooter').text
-        num_pages = int(parse_num(num_pages_txt, 1))
-    except: 
-        print('No jobs for search {} in {}'.format(jobTitle, jobLocation))
-        sys.exit(0)
-    
-    # Give it a little time before starting to click and parse
-    time.sleep(random.randint(6, 12))
+    for company in companies:
 
-    is_next = True
-    while is_next: 
-        jobs = scrape_job_page(driver, jobTitle, jobLocation)
-        time.sleep(random.randint(5, 8))
-        is_next = check_if_next(driver, num_pages)
+        # Navigate to Glassdoor company reviews search page
+        driver.get('https://www.glassdoor.com/Reviews/index.htm')
+        driver.maximize_window()
+
+        # Find Sign In link and click it
+        signInLink = driver.find_element_by_class_name("sign-in")
+        signInLink.click()
+        time.sleep(1)
+
+        # Find user name and password fields and enter them
+        uNameField = driver.find_element_by_id("signInUsername")
+        uNameField.send_keys(creds.GLASSDOOR_USR)
+        uPwdField = driver.find_element_by_id("signInPassword")
+        uPwdField.send_keys(creds.GLASSDOOR_PSD)
+        uPwdField.send_keys(Keys.ENTER)
+        time.sleep(1)
+
+        # Find search box, enter company name and hit enter
+        titleSearch = driver.find_element_by_id('KeywordSearch')
+        titleSearch.clear()
+        titleSearch.send_keys(company)
+        titleSearch.send_keys(Keys.ENTER)
+        time.sleep(1)
+
+        # Switch to new tab if one was opened
+        driver.switch_to.window(driver.window_handles[-1])
+
+        # Find See All Reviews link and press it
+        try:
+            allReviewsLink = driver.find_element(By.XPATH, "//a[@class='eiCell cell reviews']")
+            allReviewsLink.click()
+            time.sleep(1)
+        except Exception as e:
+            print(e)
+            print("Skipping company!!")
+            continue
+
+        # While there are more pages
+        hasNextPage = True
+        while hasNextPage:
+            reviews = pd.DataFrame(columns=['company', 'datetime', 'summary', 'pro', 'con', 'md5'])
+
+            # Press all the Show More links
+            for link in driver.find_elements(By.XPATH, "//span[@class='link moreLink']"):
+                ActionChains(driver).move_to_element(link).click(link).perform()
+                time.sleep(.1)
+
+            # Get the review summaries
+            reviews.summary = [x.text.encode() for x in driver.find_elements_by_class_name("reviewLink")]
+
+            # Get pros skipping first one because it's featured
+            reviews.pro = [x.text.encode() for x in driver.find_elements_by_class_name("pros")][1:]
+
+            # Get Cons skipping first one because it's featured
+            reviews.con = [x.text.encode() for x in driver.find_elements_by_class_name("cons")][1:]
+
+            # Create a unique hash to identify each review
+            reviews.md5 = [hashlib.md5(x+y+z).hexdigest() for x, y, z in
+                           reviews[['summary', 'pro', 'con']].values]
+
+            # Add company name and the datetime
+            reviews.company = company
+            reviews.datetime = datetime.datetime.now()
+
+            # Add data to database
+            db.write_table("glassdoor", reviews)
+
+            # TODO: Make sure duplicates aren't entered in db
+
+            # TODO: Keep current companies reviews in memory and check for duplicates
+
+            # TODO: Skip pages already scraped
+
+            # TODO: Setup secondary Glassdoor account
+
+            # TODO: Optimize for speed
+
+            # Get next link and press it
+            try:
+                driver.find_element_by_class_name("next").click()
+            except Exception as e:
+                hasNextPage = False
+                print(e)
+
+
     driver.close()
+
+# File snapshot =((TakesScreenshot)driver).getScreenshotAs(OutputType.FILE);  javascript example of screenshot
