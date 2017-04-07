@@ -23,8 +23,8 @@ class MySqlConnector(object):
             print("Failed to connect! Error={}".format(e))
             sys.exit()
 
-    def write_table(self, table_name: str, dataframe: pd.DataFrame, mode: str='append'):
-        dataframe.to_sql(name=table_name, con=self._conn, if_exists=mode, index=False)
+    def write_table(self, table_name: str, dataframe: pd.DataFrame, mode: str='append', with_index=False):
+        dataframe.to_sql(name=table_name, con=self._conn, if_exists=mode, index=with_index)
 
     def read_table(self, table_name: str) -> pd.DataFrame:
         return pd.read_sql_table(table_name=table_name, con=self._conn)

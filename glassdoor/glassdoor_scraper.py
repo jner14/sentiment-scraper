@@ -27,6 +27,8 @@ import creds
 Keys = webdriver.common.keys.Keys
 By = webdriver.common.by.By
 ActionChains = webdriver.common.action_chains.ActionChains
+REVIEW_FIELDS = ['company', 'datetime', 'summary', 'pro', 'con', 'md5']
+
 
 def scrape_job_page(driver, job_title, job_location):
     """Scrape a page of reviews from Glassdoor.
@@ -204,10 +206,15 @@ def check_if_last_page(page_links, num_pages):
 
 if __name__ == '__main__':
 
-    try:
-        companies = [x for x in sys.argv][1:]
-    except IndexError:
-        raise Exception('Program needs one or more company names!')
+    # try:
+    #     companies = [x for x in sys.argv][1:]
+    # except IndexError:
+    #     raise Exception('Program needs one or more company names!')
+
+    # compList = pd.read_excel("f:\\OneDrive\\FreelanceWork\\Rich Trombetta Innovation is Easy\\List_of_companies_for_data.xlsx",
+    #                          "List_of_companies_for_data - Sh")
+
+    companies = ['Disney', 'Du Pont', 'Exxon Mobil', 'General Electric', 'Goldman Sachs', 'Home Depot']
 
     # Create a database connection object
     db = MySqlConnector(creds.DB_URL, creds.DB_USR, creds.DB_PWD)
@@ -215,24 +222,27 @@ if __name__ == '__main__':
     # Create Selenium webdriver using Chrome and chromedriver
     driver = webdriver.Chrome()
 
+    # Navigate to Glassdoor company reviews search page
+    driver.get('https://www.glassdoor.com/Reviews/index.htm')
+    driver.maximize_window()
+
+    # Find Sign In link and click it
+    signInLink = driver.find_element_by_class_name("sign-in")
+    signInLink.click()
+    time.sleep(1)
+
+    # Find user name and password fields and enter them
+    uNameField = driver.find_element_by_id("signInUsername")
+    uNameField.send_keys(creds.GLASSDOOR_USR)
+    uPwdField = driver.find_element_by_id("signInPassword")
+    uPwdField.send_keys(creds.GLASSDOOR_PSD)
+    uPwdField.send_keys(Keys.ENTER)
+    time.sleep(1)
+
     for company in companies:
 
         # Navigate to Glassdoor company reviews search page
         driver.get('https://www.glassdoor.com/Reviews/index.htm')
-        driver.maximize_window()
-
-        # Find Sign In link and click it
-        signInLink = driver.find_element_by_class_name("sign-in")
-        signInLink.click()
-        time.sleep(1)
-
-        # Find user name and password fields and enter them
-        uNameField = driver.find_element_by_id("signInUsername")
-        uNameField.send_keys(creds.GLASSDOOR_USR)
-        uPwdField = driver.find_element_by_id("signInPassword")
-        uPwdField.send_keys(creds.GLASSDOOR_PSD)
-        uPwdField.send_keys(Keys.ENTER)
-        time.sleep(1)
 
         # Find search box, enter company name and hit enter
         titleSearch = driver.find_element_by_id('KeywordSearch')
@@ -241,8 +251,17 @@ if __name__ == '__main__':
         titleSearch.send_keys(Keys.ENTER)
         time.sleep(1)
 
-        # Switch to new tab if one was opened
-        driver.switch_to.window(driver.window_handles[-1])
+        # Check for extra tabs and close them
+        for handle in driver.window_handles:
+            driver.switch_to.window(handle)
+            if 'SRCH' not in driver.current_url:
+                driver.close()
+
+        if len(driver.window_handles) != 1:
+            continue
+
+        # Switch to search tab
+        driver.switch_to.window(driver.window_handles[0])
 
         # Find See All Reviews link and press it
         try:
@@ -255,42 +274,44 @@ if __name__ == '__main__':
             continue
 
         # While there are more pages
+        companyReviews = pd.DataFrame(columns=REVIEW_FIELDS)
         hasNextPage = True
-        while hasNextPage:
-            reviews = pd.DataFrame(columns=['company', 'datetime', 'summary', 'pro', 'con', 'md5'])
+        i = 0
+        while hasNextPage and i < 100:
+            i += 1
+            try:
+                reviews = pd.DataFrame(columns=REVIEW_FIELDS)
 
-            # Press all the Show More links
-            for link in driver.find_elements(By.XPATH, "//span[@class='link moreLink']"):
-                ActionChains(driver).move_to_element(link).click(link).perform()
-                time.sleep(.1)
+                # Press all the Show More links
+                for link in driver.find_elements(By.XPATH, "//span[@class='link moreLink']"):
+                    ActionChains(driver).move_to_element(link).click(link).perform()
+                    time.sleep(.1)
 
-            # Get the review summaries
-            reviews.summary = [x.text.encode() for x in driver.find_elements_by_class_name("reviewLink")]
+                # Get the review summaries
+                reviews.summary = [x.text.encode() for x in driver.find_elements_by_class_name("reviewLink")]
 
-            # Get pros skipping first one because it's featured
-            reviews.pro = [x.text.encode() for x in driver.find_elements_by_class_name("pros")][1:]
+                # Get pros skipping first one because it's featured
+                reviews.pro = [x.text.encode() for x in driver.find_elements_by_class_name("pros")][-10:]
 
-            # Get Cons skipping first one because it's featured
-            reviews.con = [x.text.encode() for x in driver.find_elements_by_class_name("cons")][1:]
+                # Get Cons skipping first one because it's featured
+                reviews.con = [x.text.encode() for x in driver.find_elements_by_class_name("cons")][-10:]
 
-            # Create a unique hash to identify each review
-            reviews.md5 = [hashlib.md5(x+y+z).hexdigest() for x, y, z in
-                           reviews[['summary', 'pro', 'con']].values]
+                # Create a unique hash to identify each review
+                reviews.md5 = [hashlib.md5(x+y+z).hexdigest() for x, y, z in reviews[['summary', 'pro', 'con']].values]
 
-            # Add company name and the datetime
-            reviews.company = company
-            reviews.datetime = datetime.datetime.now()
+                # Add company name and the datetime
+                reviews.company = company
+                reviews.datetime = datetime.datetime.now()
 
-            # Add data to database
-            db.write_table("glassdoor", reviews)
+                # Add to company reviews
+                companyReviews = pd.concat([companyReviews, reviews])
 
-            # TODO: Make sure duplicates aren't entered in db
+            except Exception as e:
+                print(e)
 
-            # TODO: Keep current companies reviews in memory and check for duplicates
+            # TODO: Create main script to run all scripts
 
             # TODO: Skip pages already scraped
-
-            # TODO: Setup secondary Glassdoor account
 
             # TODO: Optimize for speed
 
@@ -301,6 +322,8 @@ if __name__ == '__main__':
                 hasNextPage = False
                 print(e)
 
+        # Add data to database, grouping by md5 to remove duplicates
+        db.write_table("glassdoor", companyReviews.groupby('md5', as_index=False).first())
 
     driver.close()
 
