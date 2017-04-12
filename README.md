@@ -7,8 +7,8 @@ This is a web-scraper to scrape
 
 In addition to downloading or cloning the repo you must also:
 
-#### Install Chome and Python 3.6 64bit
- - Requires Chrome.  The chromedriver, which is used to control it, is already included.
+#### Install Chrome and Python 3.6 64bit
+ - Requires Chrome and chromedriver, but chromedriver (used to control chrome) is already included.
  - Requires Python 3.6 64bit.  Might work with other versions of Python 3, but they are untested.
 
 #### Install Python Packages
